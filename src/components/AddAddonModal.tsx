@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Addon, WagoSearchResult } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -86,6 +86,12 @@ export const AddAddonModal: React.FC<Props> = ({ isOpen, onClose, onAddonAdded }
 
   // Presets state
   const [presetLoadingTarget, setPresetLoadingTarget] = useState<string | null>(null);
+
+  // Clear errors when modal opens or tab switches
+  useEffect(() => {
+    setGithubError(null);
+    setWagoError(null);
+  }, [isOpen, activeTab]);
 
   if (!isOpen) return null;
 
@@ -243,7 +249,10 @@ export const AddAddonModal: React.FC<Props> = ({ isOpen, onClose, onAddonAdded }
                   <input
                     type="text"
                     value={githubInput}
-                    onChange={(e) => setGithubInput(e.target.value)}
+                    onChange={(e) => {
+                      setGithubInput(e.target.value);
+                      if (githubError) setGithubError(null);
+                    }}
                     placeholder="e.g. WeakAuras/WeakAuras2 or https://github.com/..."
                     className="flex-1 bg-[#0d0f15] border border-[#262c3d] rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors"
                   />
@@ -274,7 +283,10 @@ export const AddAddonModal: React.FC<Props> = ({ isOpen, onClose, onAddonAdded }
                 <input
                   type="text"
                   value={wagoQuery}
-                  onChange={(e) => setWagoQuery(e.target.value)}
+                  onChange={(e) => {
+                    setWagoQuery(e.target.value);
+                    if (wagoError) setWagoError(null);
+                  }}
                   placeholder="Search thousands of WoW addons on Wago.io..."
                   className="flex-1 bg-[#0d0f15] border border-[#262c3d] rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors"
                 />

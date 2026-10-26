@@ -39,6 +39,7 @@ export const BrowseView: React.FC<Props> = ({
   installingId,
 }) => {
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [category, setCategory] = useState('all');
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<WagoSearchResult[]>([]);
@@ -55,16 +56,26 @@ export const BrowseView: React.FC<Props> = ({
   const [githubLoading, setGithubLoading] = useState(false);
 
   const loaderRef = useRef<HTMLDivElement>(null);
+  const requestIdRef = useRef(0);
+  const suggestReqIdRef = useRef(0);
 
-  // Fetch when search or category changes
+  // Debounce search input (300ms) to prevent race conditions while typing
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Fetch when debounced search or category changes
   useEffect(() => {
     setPage(1);
     setItems([]);
     setHasMore(true);
-    fetchCatalog(1, true);
-  }, [search, category]);
+    fetchCatalog(1, true, debouncedSearch, category);
+  }, [debouncedSearch, category]);
 
-  // Autocomplete debounce
+  // Autocomplete debounce with request ID tracking
   useEffect(() => {
     if (!search.trim() || search.length < 2) {
       setSuggestions([]);
@@ -73,17 +84,22 @@ export const BrowseView: React.FC<Props> = ({
     }
 
     const timer = setTimeout(async () => {
+      const currentReqId = ++suggestReqIdRef.current;
       try {
         const results = await invoke<WagoSearchResult[]>('browse_addons', {
           page: 1,
           query: search.trim(),
           category: null,
         });
-        const titles = results.slice(0, 5).map((r) => r.name);
-        setSuggestions(titles);
-        setShowSuggestions(titles.length > 0);
+        if (currentReqId === suggestReqIdRef.current) {
+          const titles = results.slice(0, 5).map((r) => r.name);
+          setSuggestions(titles);
+          setShowSuggestions(titles.length > 0);
+        }
       } catch (e) {
-        console.error(e);
+        if (currentReqId === suggestReqIdRef.current) {
+          console.error('Failed to get suggestions:', e);
+        }
       }
     }, 250);
 
@@ -108,14 +124,25 @@ export const BrowseView: React.FC<Props> = ({
     return () => observer.disconnect();
   }, [loading, hasMore, page]);
 
-  const fetchCatalog = async (targetPage: number, reset: boolean = false) => {
+  const fetchCatalog = async (
+    targetPage: number,
+    reset: boolean = false,
+    searchQuery: string = debouncedSearch,
+    cat: string = category
+  ) => {
+    const currentReqId = ++requestIdRef.current;
     setLoading(true);
     try {
       const results = await invoke<WagoSearchResult[]>('browse_addons', {
         page: targetPage,
-        query: search.trim() ? search.trim() : null,
-        category: category === 'all' ? null : category,
+        query: searchQuery.trim() ? searchQuery.trim() : null,
+        category: cat === 'all' ? null : cat,
       });
+
+      // Ignore response if a newer request was dispatched
+      if (currentReqId !== requestIdRef.current) {
+        return;
+      }
 
       if (results.length === 0) {
         setHasMore(false);
@@ -123,10 +150,14 @@ export const BrowseView: React.FC<Props> = ({
         setItems((prev) => (reset ? results : [...prev, ...results]));
       }
     } catch (err) {
-      console.error('Failed to browse addons:', err);
-      setHasMore(false);
+      if (currentReqId === requestIdRef.current) {
+        console.error('Failed to browse addons:', err);
+        setHasMore(false);
+      }
     } finally {
-      setLoading(false);
+      if (currentReqId === requestIdRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -134,7 +165,7 @@ export const BrowseView: React.FC<Props> = ({
     if (loading || !hasMore) return;
     const nextPage = page + 1;
     setPage(nextPage);
-    fetchCatalog(nextPage, false);
+    fetchCatalog(nextPage, false, debouncedSearch, category);
   };
 
   const handleGithubSubmit = async (e: React.FormEvent) => {
@@ -158,6 +189,8 @@ export const BrowseView: React.FC<Props> = ({
 
     return installedAddons.some((a) => {
       if (a.wago_slug && norm(a.wago_slug) === cleanSlug) return true;
+      if (a.repo && norm(a.repo) === cleanSlug) return true;
+      if (norm(a.id) === cleanSlug) return true;
       if (norm(a.name) === cleanName) return true;
 
       const cleanInstalled = norm(a.name);

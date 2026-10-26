@@ -3,13 +3,14 @@ export interface Settings {
   github_token?: string | null;
   details_view_mode?: 'full' | 'drawer' | null;
   game_flavor?: 'retail' | 'forever' | 'all' | null;
+  auto_update_addons?: boolean | null;
 }
 
 export interface Addon {
   id: string;
   name: string;
   author: string;
-  source: 'github' | 'wago';
+  source: 'github' | 'wago' | 'tukui' | string;
   repo?: string | null;
   wago_slug?: string | null;
   installed_version?: string | null;
@@ -22,6 +23,21 @@ export interface Addon {
   updated_at?: string | null;
   ignored?: boolean | null;
   release_channel?: 'release' | 'beta' | 'alpha' | string | null;
+}
+
+export interface AddonPackItem {
+  name: string;
+  source: string;
+  repo?: string | null;
+  wago_slug?: string | null;
+  tukui_slug?: string | null;
+}
+
+export interface AddonPack {
+  vault_version: string;
+  name: string;
+  export_date: string;
+  addons: AddonPackItem[];
 }
 
 export interface AddonVersion {

@@ -13,6 +13,7 @@ import {
   Trash2,
   ChevronRight,
   Check,
+  Link2,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -25,6 +26,7 @@ interface Props {
   onReinstall: (addonId: string) => void;
   onDelete: (addonId: string) => void;
   onUpdateAddon: (updated: Addon) => void;
+  onOpenLinkSource: (addon: Addon) => void;
   showToast: (msg: string) => void;
 }
 
@@ -37,6 +39,7 @@ export const AddonContextMenu: React.FC<Props> = ({
   onReinstall,
   onDelete,
   onUpdateAddon,
+  onOpenLinkSource,
   showToast,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -174,6 +177,23 @@ export const AddonContextMenu: React.FC<Props> = ({
       >
         <Eye size={14} className="text-slate-400" />
         <span>View Addon</span>
+      </button>
+
+      {/* Link Remote Source (GitHub, Wago, Tukui) */}
+      <button
+        onClick={() => {
+          onOpenLinkSource(addon);
+          onClose();
+        }}
+        className="w-full px-3 py-2 flex items-center justify-between hover:bg-cyan-500/15 hover:text-cyan-300 text-left transition-colors text-cyan-200"
+      >
+        <div className="flex items-center gap-2.5">
+          <Link2 size={14} className="text-cyan-400" />
+          <span>Link Remote Source</span>
+        </div>
+        <span className="text-[10px] text-slate-500 font-mono capitalize">
+          {addon.source || 'unlinked'}
+        </span>
       </button>
 
       <div className="my-1 border-t border-[#242b3d]" />

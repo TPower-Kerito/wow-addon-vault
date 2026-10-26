@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { GithubIcon } from './GithubIcon';
 import { AddonContextMenu } from './AddonContextMenu';
+import { LinkSourceModal } from './LinkSourceModal';
 
 type ViewMode = 'table' | 'list' | 'tiles' | 'grouped';
 type SortField = 'name' | 'latest_version' | 'author' | 'status';
@@ -36,6 +37,10 @@ interface Props {
   onOpenAddModal: () => void;
   onSelectAddon?: (slug: string) => void;
   onUpdateAddon?: (updated: Addon) => void;
+  onUpdateAll?: () => void;
+  updatingAll?: boolean;
+  autoUpdateEnabled?: boolean;
+  onToggleAutoUpdate?: () => void;
   showToast?: (msg: string) => void;
 }
 
@@ -47,6 +52,10 @@ export const AddonList: React.FC<Props> = ({
   onOpenAddModal,
   onSelectAddon,
   onUpdateAddon,
+  onUpdateAll,
+  updatingAll = false,
+  autoUpdateEnabled = false,
+  onToggleAutoUpdate,
   showToast = () => {},
 }) => {
   const [search, setSearch] = useState('');
@@ -85,6 +94,9 @@ export const AddonList: React.FC<Props> = ({
     addon: Addon;
   } | null>(null);
 
+  // Link Remote Source Modal
+  const [addonToLink, setAddonToLink] = useState<Addon | null>(null);
+
   // Collapsed groups in grouped view
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
@@ -120,19 +132,27 @@ export const AddonList: React.FC<Props> = ({
     });
   }, [addons, search, filter]);
 
-  // Sort filtered list
+  // Sort filtered list: CurseForge style (Updatable addons ALWAYS at the very top)
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
+      const aUpdatable = isAddonUpdatable(a);
+      const bUpdatable = isAddonUpdatable(b);
+
+      // Prioritize addons requiring updates to top
+      if (aUpdatable !== bUpdatable) {
+        return aUpdatable ? -1 : 1;
+      }
+
       let comparison = 0;
       if (sortField === 'name') {
-        comparison = a.name.localeCompare(b.name);
+        comparison = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
       } else if (sortField === 'author') {
-        comparison = a.author.localeCompare(b.author);
+        comparison = a.author.localeCompare(b.author, undefined, { sensitivity: 'base' });
       } else if (sortField === 'latest_version') {
         comparison = (a.latest_version || '').localeCompare(b.latest_version || '');
       } else if (sortField === 'status') {
-        const aScore = isAddonUpdatable(a) ? 2 : a.installed_version ? 1 : 0;
-        const bScore = isAddonUpdatable(b) ? 2 : b.installed_version ? 1 : 0;
+        const aScore = aUpdatable ? 2 : a.installed_version ? 1 : 0;
+        const bScore = bUpdatable ? 2 : b.installed_version ? 1 : 0;
         comparison = aScore - bScore;
       }
       return sortOrder === 'asc' ? comparison : -comparison;
@@ -351,57 +371,122 @@ export const AddonList: React.FC<Props> = ({
           )}
         </div>
 
-        {/* Right: View Mode Toggle Buttons (CurseForge style) */}
-        <div className="flex items-center gap-1 bg-[#0d0f15] p-1 rounded-xl border border-[#262c3d] shrink-0 self-end lg:self-center">
-          <button
-            onClick={() => handleSetViewMode('table')}
-            title="Table View (CurseForge Columns)"
-            className={`p-1.5 rounded-lg transition-colors ${
-              viewMode === 'table'
-                ? 'bg-amber-500/20 text-amber-400 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-[#161922]'
-            }`}
-          >
-            <LayoutList size={16} />
-          </button>
+        {/* Right: Auto-Update Quick Toggle & View Mode Toggle Buttons */}
+        <div className="flex items-center gap-2 shrink-0 self-end lg:self-center">
+          {/* Quick Auto-Update Switch */}
+          {onToggleAutoUpdate && (
+            <button
+              onClick={onToggleAutoUpdate}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition-all ${
+                autoUpdateEnabled
+                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 shadow-sm shadow-amber-500/10'
+                  : 'bg-[#0d0f15] text-slate-400 border-[#262c3d] hover:text-white'
+              }`}
+              title="Toggle automatic updates for all addons"
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  autoUpdateEnabled ? 'bg-amber-400 animate-ping' : 'bg-slate-600'
+                }`}
+              />
+              <span>Auto-Update: {autoUpdateEnabled ? 'ON' : 'OFF'}</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => handleSetViewMode('list')}
-            title="List View (Detailed Cards)"
-            className={`p-1.5 rounded-lg transition-colors ${
-              viewMode === 'list'
-                ? 'bg-amber-500/20 text-amber-400 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-[#161922]'
-            }`}
-          >
-            <List size={16} />
-          </button>
+          {/* View Mode Buttons (CurseForge style) */}
+          <div className="flex items-center gap-1 bg-[#0d0f15] p-1 rounded-xl border border-[#262c3d]">
+            <button
+              onClick={() => handleSetViewMode('table')}
+              title="Table View (CurseForge Columns)"
+              className={`p-1.5 rounded-lg transition-colors ${
+                viewMode === 'table'
+                  ? 'bg-amber-500/20 text-amber-400 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-[#161922]'
+              }`}
+            >
+              <LayoutList size={16} />
+            </button>
 
-          <button
-            onClick={() => handleSetViewMode('tiles')}
-            title="Tiles View (Grid)"
-            className={`p-1.5 rounded-lg transition-colors ${
-              viewMode === 'tiles'
-                ? 'bg-amber-500/20 text-amber-400 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-[#161922]'
-            }`}
-          >
-            <LayoutGrid size={16} />
-          </button>
+            <button
+              onClick={() => handleSetViewMode('list')}
+              title="List View (Detailed Cards)"
+              className={`p-1.5 rounded-lg transition-colors ${
+                viewMode === 'list'
+                  ? 'bg-amber-500/20 text-amber-400 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-[#161922]'
+              }`}
+            >
+              <List size={16} />
+            </button>
 
-          <button
-            onClick={() => handleSetViewMode('grouped')}
-            title="Grouped View (By Status)"
-            className={`p-1.5 rounded-lg transition-colors ${
-              viewMode === 'grouped'
-                ? 'bg-amber-500/20 text-amber-400 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-[#161922]'
-            }`}
-          >
-            <Layers size={16} />
-          </button>
+            <button
+              onClick={() => handleSetViewMode('tiles')}
+              title="Tiles View (Grid)"
+              className={`p-1.5 rounded-lg transition-colors ${
+                viewMode === 'tiles'
+                  ? 'bg-amber-500/20 text-amber-400 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-[#161922]'
+              }`}
+            >
+              <LayoutGrid size={16} />
+            </button>
+
+            <button
+              onClick={() => handleSetViewMode('grouped')}
+              title="Grouped View (By Status)"
+              className={`p-1.5 rounded-lg transition-colors ${
+                viewMode === 'grouped'
+                  ? 'bg-amber-500/20 text-amber-400 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-[#161922]'
+              }`}
+            >
+              <Layers size={16} />
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* CurseForge Style Update Available Banner */}
+      {updateCount > 0 && onUpdateAll && (
+        <div className="bg-gradient-to-r from-emerald-500/15 via-emerald-500/10 to-transparent border border-emerald-500/30 p-3.5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg shadow-emerald-500/5 animate-in fade-in duration-200">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <ArrowUpCircle size={18} className="animate-pulse" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                Updates Available ({updateCount})
+                <span className="text-[10px] font-normal text-emerald-400/90">
+                  Ready to install
+                </span>
+              </h4>
+              <p className="text-[11px] text-slate-400">
+                Addons requiring updates are placed at the top of your list.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-center">
+            <button
+              onClick={onUpdateAll}
+              disabled={updatingAll}
+              className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition-all flex items-center gap-1.5 shadow-md shadow-emerald-500/20 disabled:opacity-50"
+            >
+              {updatingAll ? (
+                <>
+                  <Loader2 size={13} className="animate-spin" />
+                  <span>Updating All...</span>
+                </>
+              ) : (
+                <>
+                  <ArrowUpCircle size={14} />
+                  <span>Update All ({updateCount})</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Batch Selection Action Bar */}
       {selectedIds.size > 0 && (
@@ -928,9 +1013,23 @@ export const AddonList: React.FC<Props> = ({
           onUpdateAddon={(updated) => {
             onUpdateAddon && onUpdateAddon(updated);
           }}
+          onOpenLinkSource={(addon) => {
+            setAddonToLink(addon);
+          }}
           showToast={showToast}
         />
       )}
+
+      {/* Link Remote Source Modal */}
+      <LinkSourceModal
+        isOpen={Boolean(addonToLink)}
+        addon={addonToLink}
+        onClose={() => setAddonToLink(null)}
+        onUpdateAddon={(updated) => {
+          onUpdateAddon && onUpdateAddon(updated);
+        }}
+        showToast={showToast}
+      />
     </div>
   );
 };

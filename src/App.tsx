@@ -7,6 +7,7 @@ import { BrowseView } from './components/BrowseView';
 import { AddonDetailsView } from './components/AddonDetailsView';
 import { SettingsModal } from './components/SettingsModal';
 import { ScanImportModal } from './components/ScanImportModal';
+import { SharePackModal } from './components/SharePackModal';
 import { AlertTriangle, Sparkles, Loader2, Download } from 'lucide-react';
 
 export function App() {
@@ -16,6 +17,7 @@ export function App() {
     github_token: null,
     details_view_mode: 'full',
     game_flavor: 'retail',
+    auto_update_addons: false,
   });
   const [addons, setAddons] = useState<Addon[]>([]);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
@@ -31,6 +33,9 @@ export function App() {
   const [scannedAddons, setScannedAddons] = useState<ScannedAddon[]>([]);
   const [scanningDisk, setScanningDisk] = useState(false);
 
+  // Share Pack modal
+  const [isSharePackOpen, setIsSharePackOpen] = useState(false);
+
   // Settings modal
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
@@ -39,6 +44,18 @@ export function App() {
   useEffect(() => {
     loadInitialData();
   }, []);
+
+  // Periodic background update check every 15 minutes (15 * 60 * 1000 ms)
+  useEffect(() => {
+    const FIFTEEN_MINUTES = 15 * 60 * 1000;
+    const interval = setInterval(() => {
+      if (addons.length > 0 && settings.wow_path && settings.wow_path.trim()) {
+        executeCheckUpdates(Boolean(settings.auto_update_addons), true);
+      }
+    }, FIFTEEN_MINUTES);
+
+    return () => clearInterval(interval);
+  }, [addons.length, settings.wow_path, settings.auto_update_addons]);
 
   const loadInitialData = async () => {
     try {
@@ -67,6 +84,11 @@ export function App() {
         } else {
           setIsSettingsOpen(true);
         }
+      }
+
+      // Auto-check for addon updates on startup
+      if (loadedAddons.length > 0 && effectivePath && effectivePath.trim()) {
+        executeCheckUpdates(Boolean(loadedSettings.auto_update_addons), true);
       }
     } catch (err) {
       console.error('Error loading initial data:', err);
@@ -131,21 +153,72 @@ export function App() {
     }
   };
 
-  const handleCheckUpdates = async () => {
+  const isAddonUpdatable = (a: Addon) => {
+    if (a.ignored) return false;
+    if (!a.latest_version || a.latest_version === '-' || a.latest_version === 'none') return false;
+    return Boolean(a.has_update);
+  };
+
+  const executeCheckUpdates = async (autoUpdateIfFound = false, isBackground = false) => {
     setCheckingUpdates(true);
     try {
       const refreshed = await invoke<Addon[]>('check_all_updates');
       setAddons(refreshed);
-      const count = refreshed.filter((a) => a.has_update).length;
+      const toUpdate = refreshed.filter(isAddonUpdatable);
+      const count = toUpdate.length;
+
       if (count > 0) {
-        showToast(`Found ${count} addon update${count > 1 ? 's' : ''}!`);
-      } else {
+        if (autoUpdateIfFound && settings.wow_path && settings.wow_path.trim()) {
+          showToast(`Auto-Update: Updating ${count} addon(s) in background... 🚀`);
+          setUpdatingAll(true);
+          for (const addon of toUpdate) {
+            setInstallingId(addon.id);
+            try {
+              const updated = await invoke<Addon>('install_or_update', { addonId: addon.id });
+              setAddons((prev) => prev.map((a) => (a.id === addon.id ? updated : a)));
+            } catch (err) {
+              console.error(`Auto-update failed for ${addon.name}`, err);
+            }
+          }
+          setInstallingId(null);
+          setUpdatingAll(false);
+          showToast(`Auto-Update completed for ${count} addon(s)! ✨`);
+        } else {
+          showToast(`Found ${count} addon update${count > 1 ? 's' : ''}!`);
+        }
+      } else if (!isBackground) {
         showToast('All addons are up to date! 🛡️');
       }
     } catch (err: any) {
-      showToast(`Error checking updates: ${err}`);
+      if (!isBackground) {
+        showToast(`Error checking updates: ${err}`);
+      }
     } finally {
       setCheckingUpdates(false);
+    }
+  };
+
+  const handleCheckUpdates = () => executeCheckUpdates(Boolean(settings.auto_update_addons), false);
+
+  const handleToggleAutoUpdate = async () => {
+    const nextState = !settings.auto_update_addons;
+    const updated = { ...settings, auto_update_addons: nextState };
+    setSettings(updated);
+    try {
+      await invoke('save_settings', { settings: updated });
+      showToast(
+        nextState
+          ? 'Auto-Update enabled! Addons will update in background when detected. 🚀'
+          : 'Auto-Update disabled.'
+      );
+      if (nextState) {
+        const toUpdate = addons.filter(isAddonUpdatable);
+        if (toUpdate.length > 0) {
+          handleUpdateAll();
+        }
+      }
+    } catch (e) {
+      console.error('Failed to save auto-update setting:', e);
     }
   };
 
@@ -218,9 +291,16 @@ export function App() {
       return;
     }
 
-    setInstallingId(`wago:${slug}`);
+    setInstallingId(slug.startsWith('github:') || slug.startsWith('tukui:') ? slug : `wago:${slug}`);
     try {
-      const added = await invoke<Addon>('add_addon_from_wago', { slug });
+      let added: Addon;
+      if (slug.startsWith('github:')) {
+        added = await invoke<Addon>('add_addon_from_github', { repo: slug.replace('github:', '') });
+      } else if (slug.startsWith('tukui:')) {
+        added = await invoke<Addon>('add_addon_from_tukui', { slug: slug.replace('tukui:', '') });
+      } else {
+        added = await invoke<Addon>('add_addon_from_wago', { slug });
+      }
       const updated = await invoke<Addon>('install_or_update', { addonId: added.id });
 
       setAddons((prev) => {
@@ -264,12 +344,6 @@ export function App() {
     } finally {
       setInstallingId(null);
     }
-  };
-
-  const isAddonUpdatable = (a: Addon) => {
-    if (a.ignored) return false;
-    if (!a.latest_version || a.latest_version === '-' || a.latest_version === 'none') return false;
-    return Boolean(a.has_update);
   };
 
   const handleUpdateAll = async () => {
@@ -350,6 +424,7 @@ export function App() {
         onScanDisk={handleScanDisk}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenFolder={handleOpenFolder}
+        onOpenSharePack={() => setIsSharePackOpen(true)}
         onGameFlavorChange={handleGameFlavorChange}
       />
 
@@ -436,6 +511,10 @@ export function App() {
                     prev.map((a) => (a.id === updated.id ? updated : a))
                   );
                 }}
+                onUpdateAll={handleUpdateAll}
+                updatingAll={updatingAll}
+                autoUpdateEnabled={Boolean(settings.auto_update_addons)}
+                onToggleAutoUpdate={handleToggleAutoUpdate}
                 showToast={showToast}
               />
             ) : (
@@ -478,6 +557,21 @@ export function App() {
         scannedAddons={scannedAddons}
         loading={scanningDisk}
         onImport={handleImportScanned}
+      />
+
+      <SharePackModal
+        isOpen={isSharePackOpen}
+        onClose={() => setIsSharePackOpen(false)}
+        installedAddons={addons}
+        onAddonsUpdated={async () => {
+          try {
+            const refreshed = await invoke<Addon[]>('get_addons');
+            setAddons(refreshed);
+          } catch (e) {
+            console.error(e);
+          }
+        }}
+        showToast={showToast}
       />
     </div>
   );

@@ -6,6 +6,8 @@ pub struct Settings {
     pub github_token: Option<String>,
     pub details_view_mode: Option<String>, // "full" or "drawer"
     pub game_flavor: Option<String>,       // "retail", "forever", or "all"
+    #[serde(default)]
+    pub auto_update_addons: Option<bool>,
 }
 
 impl Default for Settings {
@@ -15,6 +17,7 @@ impl Default for Settings {
             github_token: None,
             details_view_mode: Some("full".to_string()),
             game_flavor: Some("retail".to_string()),
+            auto_update_addons: Some(false),
         }
     }
 }
@@ -98,4 +101,32 @@ pub struct AppUpdateInfo {
     pub release_notes: Option<String>,
     pub download_url: Option<String>,
     pub html_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogueEntry {
+    pub name: String,
+    pub full_name: String,
+    pub url: String,
+    pub description: Option<String>,
+    pub curse_id: Option<String>,
+    pub wago_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TukuiAddon {
+    pub id: i64,
+    pub slug: String,
+    pub name: String,
+    pub author: String,
+    pub version: String,
+    pub url: String,
+    pub small_desc: Option<String>,
+    pub desc: Option<String>,
+    pub web_url: Option<String>,
+    pub logo_url: Option<String>,
+    pub screenshot_url: Option<String>,
+    #[serde(default)]
+    pub directories: Option<Vec<String>>,
+    pub last_update: Option<String>,
 }

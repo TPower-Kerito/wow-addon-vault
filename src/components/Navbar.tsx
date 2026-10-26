@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   ChevronDown,
   Check,
+  Share2,
 } from 'lucide-react';
 
 interface Props {
@@ -28,6 +29,7 @@ interface Props {
   onScanDisk: () => void;
   onOpenSettings: () => void;
   onOpenFolder: () => void;
+  onOpenSharePack: () => void;
   onGameFlavorChange: (flavor: 'retail' | 'forever' | 'all') => void;
 }
 
@@ -51,6 +53,7 @@ export const Navbar: React.FC<Props> = ({
   onScanDisk,
   onOpenSettings,
   onOpenFolder,
+  onOpenSharePack,
   onGameFlavorChange,
 }) => {
   const [flavorDropdownOpen, setFlavorDropdownOpen] = useState(false);
@@ -201,6 +204,16 @@ export const Navbar: React.FC<Props> = ({
           >
             <Scan size={14} className={scanningDisk ? 'animate-spin text-cyan-400' : 'text-cyan-400'} />
             {scanningDisk ? 'Scanning...' : 'Scan PC Addons'}
+          </button>
+
+          {/* Share & Sync Addon Pack */}
+          <button
+            onClick={onOpenSharePack}
+            className="bg-[#1a1e29] hover:bg-[#222736] text-purple-300 hover:text-purple-200 border border-purple-500/30 px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
+            title="Export or Import Addon Pack"
+          >
+            <Share2 size={14} className="text-purple-400" />
+            <span>Share Pack</span>
           </button>
 
           {/* Check Updates */}

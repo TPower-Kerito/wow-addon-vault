@@ -59,15 +59,17 @@ pub async fn install_or_update_addon(
 
     let is_wrapped_zipball = detect_github_zipball_wrapper(&root_entries);
 
+    // Safely delete previous addon folders before extracting new files
+    if !addon.folders.is_empty() {
+        let _ = delete_addon_files(addon, wow_path);
+    }
+
     for i in 0..archive.len() {
         let mut file = archive
             .by_index(i)
             .map_err(|e| format!("Corrupt zip entry: {}", e))?;
 
         let raw_name = file.name().to_string();
-        if raw_name.contains("..") || raw_name.starts_with('/') || raw_name.starts_with('\\') {
-            continue; // Security: prevent path traversal
-        }
 
         // Adjust path if wrapped inside a github root folder
         let relative_path_str = if let Some(wrapper) = &is_wrapped_zipball {
@@ -80,15 +82,32 @@ pub async fn install_or_update_addon(
             raw_name.clone()
         };
 
-        let trimmed_relative = relative_path_str.trim_start_matches(|c| c == '/' || c == '\\');
+        let trimmed_relative = relative_path_str
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_string();
+
         if trimmed_relative.is_empty() {
             continue;
         }
 
-        let out_path = addons_dir.join(trimmed_relative);
+        let rel_path = Path::new(&trimmed_relative);
+
+        // Security: Zip-Slip protection - ensure every component is Normal (no ParentDir, RootDir, Prefix)
+        let is_safe = rel_path.components().all(|c| matches!(c, std::path::Component::Normal(_)));
+        if !is_safe {
+            continue;
+        }
+
+        let out_path = addons_dir.join(rel_path);
+
+        // Double-check: ensure resolved out_path starts with addons_dir
+        if !out_path.starts_with(&addons_dir) {
+            continue;
+        }
 
         // Record the top-level folder name inside Interface/AddOns
-        if let Some(first_component) = Path::new(trimmed_relative).components().next() {
+        if let Some(first_component) = rel_path.components().next() {
             let folder_name = first_component.as_os_str().to_string_lossy().to_string();
             if !folder_name.is_empty() {
                 installed_folders.insert(folder_name);
@@ -126,13 +145,19 @@ pub fn delete_addon_files(addon: &Addon, wow_path: &str) -> Result<(), String> {
     let addons_dir = get_interface_addons_dir(wow_path)?;
 
     for folder in &addon.folders {
-        // Prevent accidental deletion of whole AddOns directory
-        if folder.trim().is_empty() || folder == "." || folder == ".." {
+        let clean_folder = folder.trim().replace('\\', "/");
+        // Prevent accidental deletion of whole AddOns directory or path traversal
+        if clean_folder.is_empty()
+            || clean_folder == "."
+            || clean_folder == ".."
+            || clean_folder.contains('/')
+            || clean_folder.contains("..")
+        {
             continue;
         }
 
-        let target = addons_dir.join(folder);
-        if target.exists() && target.is_dir() {
+        let target = addons_dir.join(&clean_folder);
+        if target.exists() && target.is_dir() && target != addons_dir && target.starts_with(&addons_dir) {
             fs::remove_dir_all(&target)
                 .map_err(|e| format!("Failed to delete folder {}: {}", target.display(), e))?;
         }
@@ -170,14 +195,50 @@ fn detect_github_zipball_wrapper(entries: &[String]) -> Option<String> {
     if entries.is_empty() {
         return None;
     }
-    // GitHub zipball creates a folder like "owner-repo-7a4b1c/"
-    let first = &entries[0];
-    if let Some(pos) = first.find('/') {
-        let potential_prefix = &first[..=pos];
-        // Check if all entries start with this prefix
-        if entries.iter().all(|e| e.starts_with(potential_prefix)) {
-            return Some(potential_prefix.to_string());
+
+    // Find the first path component of the first entry
+    let first = entries[0].replace('\\', "/");
+    let pos = first.find('/')?;
+    let potential_prefix = &first[..=pos]; // e.g. "repo-master/"
+
+    // Condition 1: All entries must start with the same parent folder
+    let all_start_with_prefix = entries.iter().all(|e| {
+        let norm = e.replace('\\', "/");
+        norm.starts_with(potential_prefix)
+    });
+
+    if !all_start_with_prefix {
+        return None;
+    }
+
+    let mut has_direct_toc = false;
+    let mut has_subfolder_toc = false;
+
+    for entry in entries {
+        let norm = entry.replace('\\', "/");
+        if !norm.starts_with(potential_prefix) {
+            continue;
+        }
+
+        let remainder = &norm[potential_prefix.len()..];
+        if remainder.is_empty() {
+            continue;
+        }
+
+        if remainder.to_lowercase().ends_with(".toc") {
+            // Check if there is another slash in remainder (i.e. inside a subfolder)
+            if remainder.contains('/') {
+                has_subfolder_toc = true;
+            } else {
+                has_direct_toc = true;
+            }
         }
     }
-    None
+
+    // Condition 2 & 3: NO direct .toc inside parent, and at least one .toc inside a subfolder
+    if !has_direct_toc && has_subfolder_toc {
+        Some(potential_prefix.to_string())
+    } else {
+        None
+    }
 }

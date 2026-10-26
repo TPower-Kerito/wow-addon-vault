@@ -172,6 +172,26 @@ fn group_submodules(raw_list: Vec<RawTocInfo>) -> Vec<ScannedAddon> {
         root_to_folders.insert(root, dom_folders);
     }
 
+    // 6. Special case: ElvUI (ElvUI, ElvUI_Libraries, ElvUI_Options)
+    let elv_folders: Vec<String> = all_folders
+        .iter()
+        .filter(|f| (f.starts_with("ElvUI_") || *f == "ElvUI") && !assigned.contains(*f))
+        .cloned()
+        .collect();
+
+    if !elv_folders.is_empty() {
+        let root = if elv_folders.contains(&"ElvUI".to_string()) {
+            "ElvUI".to_string()
+        } else {
+            elv_folders[0].clone()
+        };
+
+        for f in &elv_folders {
+            assigned.insert(f.clone());
+        }
+        root_to_folders.insert(root, elv_folders);
+    }
+
     // 6. Generic prefix and suffix grouping for remaining folders
     let mut remaining: Vec<String> = all_folders
         .iter()
@@ -307,13 +327,13 @@ fn parse_addon_dir(dir: &Path, folder_name: &str) -> Option<RawTocInfo> {
             let key = key.trim();
             let val = val.trim();
 
-            match key {
-                "Title" => title = clean_wow_text(val),
-                "Version" => version = clean_wow_text(val),
-                "Author" => author = clean_wow_text(val),
-                "Notes" => notes = Some(clean_wow_text(val)),
-                "X-Wago-ID" => wago_id = Some(val.to_string()),
-                "X-Curse-Project-ID" => curse_id = Some(val.to_string()),
+            match key.to_lowercase().as_str() {
+                "title" => title = clean_wow_text(val),
+                "version" => version = clean_wow_text(val),
+                "author" => author = clean_wow_text(val),
+                "notes" => notes = Some(clean_wow_text(val)),
+                "x-wago-id" => wago_id = Some(val.to_string()),
+                "x-curse-project-id" | "x-curse-id" => curse_id = Some(val.to_string()),
                 _ => {}
             }
         }
@@ -355,35 +375,130 @@ fn clean_wow_text(text: &str) -> String {
     out.trim().to_string()
 }
 
-pub fn convert_scanned_to_addons(scanned_list: Vec<ScannedAddon>) -> Vec<Addon> {
-    scanned_list
-        .into_iter()
-        .map(|s| {
-            let slug = s.wago_id.clone().unwrap_or_else(|| {
-                s.folder_name
+pub fn convert_scanned_to_addons_with_catalogue(
+    scanned_list: Vec<ScannedAddon>,
+    index: Option<&crate::sources::CatalogueIndex>,
+) -> Vec<Addon> {
+    let mut mapped_addons: Vec<Addon> = Vec::new();
+
+    for s in scanned_list {
+        let folder_lower = s.folder_name.to_lowercase();
+        let title_lower = s.title.to_lowercase();
+
+        let mut matched_source = "wago".to_string();
+        let mut matched_id = format!("local:{}", s.folder_name);
+        let mut matched_repo = None;
+        let mut matched_wago_slug = s.wago_id.clone();
+        let mut matched_image = None;
+        let mut matched_summary = s.notes.clone();
+
+        // 1. Match ElvUI / Tukui
+        if folder_lower == "elvui"
+            || title_lower == "elvui"
+            || s.folders.iter().any(|f| f.eq_ignore_ascii_case("elvui"))
+        {
+            matched_source = "tukui".to_string();
+            matched_id = "tukui:elvui".to_string();
+            matched_image = Some("https://storage.tukui.org/ElvUI-Logo.png".to_string());
+        } else if folder_lower == "tukui"
+            || title_lower == "tukui"
+            || s.folders.iter().any(|f| f.eq_ignore_ascii_case("tukui"))
+        {
+            matched_source = "tukui".to_string();
+            matched_id = "tukui:tukui".to_string();
+            matched_image = Some("https://storage.tukui.org/Tukui-Logo.png".to_string());
+        } else if let Some(idx) = index {
+            // 2. Lookup in GitHub Catalogue
+            if let Some(entry) = idx
+                .lookup(s.curse_id.as_deref(), s.wago_id.as_deref(), &s.folder_name)
+                .or_else(|| idx.lookup(s.curse_id.as_deref(), s.wago_id.as_deref(), &s.title))
+            {
+                matched_source = "github".to_string();
+                matched_id = format!("github:{}", entry.full_name);
+                matched_repo = Some(entry.full_name.clone());
+                matched_wago_slug = entry.wago_id.clone().or_else(|| s.wago_id.clone());
+                if matched_summary.is_none() || matched_summary.as_deref() == Some("") {
+                    matched_summary = entry.description.clone();
+                }
+            }
+        }
+
+        // 3. Fallbacks for giants if not yet matched
+        if matched_source == "wago" && matched_repo.is_none() {
+            if folder_lower == "dbm-core"
+                || folder_lower == "dbm"
+                || s.folders.iter().any(|f| f.eq_ignore_ascii_case("dbm-core"))
+            {
+                matched_source = "github".to_string();
+                matched_id = "github:DeadlyBossMods/DBM-Retail".to_string();
+                matched_repo = Some("DeadlyBossMods/DBM-Retail".to_string());
+            } else if folder_lower == "details"
+                || s.folders.iter().any(|f| f.eq_ignore_ascii_case("details"))
+            {
+                matched_source = "wago".to_string();
+                matched_id = "wago:details".to_string();
+                matched_wago_slug = Some("details".to_string());
+            } else if let Some(wid) = &s.wago_id {
+                matched_source = "wago".to_string();
+                matched_id = format!("wago:{}", wid);
+                matched_wago_slug = Some(wid.clone());
+            } else {
+                let fallback_slug = s
+                    .folder_name
                     .to_lowercase()
                     .replace(' ', "-")
-                    .replace(|c: char| !c.is_alphanumeric() && c != '-', "")
-            });
-
-            Addon {
-                id: format!("local:{}", s.folder_name),
-                name: s.title,
-                author: s.author,
-                source: "wago".to_string(),
-                repo: None,
-                wago_slug: Some(slug),
-                installed_version: Some(s.version.clone()),
-                latest_version: Some(s.version),
-                has_update: false,
-                folders: s.folders,
-                download_url: None,
-                summary: s.notes,
-                image_url: None,
-                updated_at: None,
-                ignored: None,
-                release_channel: None,
+                    .replace(|c: char| !c.is_alphanumeric() && c != '-', "");
+                matched_wago_slug = Some(fallback_slug);
             }
-        })
-        .collect()
+        }
+
+        mapped_addons.push(Addon {
+            id: matched_id,
+            name: s.title,
+            author: s.author,
+            source: matched_source,
+            repo: matched_repo,
+            wago_slug: matched_wago_slug,
+            installed_version: Some(s.version.clone()),
+            latest_version: Some(s.version),
+            has_update: false,
+            folders: s.folders,
+            download_url: None,
+            summary: matched_summary,
+            image_url: matched_image,
+            updated_at: None,
+            ignored: None,
+            release_channel: None,
+        });
+    }
+
+    // Deduplicate and merge submodules that map to the same addon id
+    let mut by_id: HashMap<String, Addon> = HashMap::new();
+    for addon in mapped_addons {
+        if let Some(existing) = by_id.get_mut(&addon.id) {
+            for f in addon.folders {
+                if !existing.folders.contains(&f) {
+                    existing.folders.push(f);
+                }
+            }
+            existing.folders.sort();
+            existing.folders.dedup();
+            if existing.installed_version.is_none() && addon.installed_version.is_some() {
+                existing.installed_version = addon.installed_version;
+            }
+            if existing.image_url.is_none() && addon.image_url.is_some() {
+                existing.image_url = addon.image_url;
+            }
+        } else {
+            by_id.insert(addon.id.clone(), addon);
+        }
+    }
+
+    let mut result: Vec<Addon> = by_id.into_values().collect();
+    result.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    result
+}
+
+pub fn convert_scanned_to_addons(scanned_list: Vec<ScannedAddon>) -> Vec<Addon> {
+    convert_scanned_to_addons_with_catalogue(scanned_list, None)
 }

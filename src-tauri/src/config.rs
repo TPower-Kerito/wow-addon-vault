@@ -26,11 +26,33 @@ pub fn load_settings() -> Settings {
     default_settings
 }
 
+fn atomic_write_json<T: serde::Serialize + ?Sized>(target_file: &Path, value: &T) -> Result<(), String> {
+    let parent = target_file
+        .parent()
+        .ok_or_else(|| "Invalid target path".to_string())?;
+    let _ = fs::create_dir_all(parent);
+
+    let data = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    let tmp_file = target_file.with_extension("tmp");
+
+    fs::write(&tmp_file, &data).map_err(|e| format!("Failed to write tmp file: {}", e))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        if target_file.exists() {
+            let _ = fs::remove_file(target_file);
+        }
+    }
+
+    fs::rename(&tmp_file, target_file)
+        .map_err(|e| format!("Failed to save atomic file {}: {}", target_file.display(), e))?;
+
+    Ok(())
+}
+
 pub fn save_settings(settings: &Settings) -> Result<(), String> {
     let file = get_app_dir().join("settings.json");
-    let data = serde_json::to_string_pretty(settings)
-        .map_err(|e| e.to_string())?;
-    fs::write(&file, data).map_err(|e| e.to_string())
+    atomic_write_json(&file, settings)
 }
 
 pub fn load_addons() -> Vec<Addon> {
@@ -45,9 +67,7 @@ pub fn load_addons() -> Vec<Addon> {
 
 pub fn save_addons(addons: &[Addon]) -> Result<(), String> {
     let file = get_app_dir().join("addons.json");
-    let data = serde_json::to_string_pretty(addons)
-        .map_err(|e| e.to_string())?;
-    fs::write(&file, data).map_err(|e| e.to_string())
+    atomic_write_json(&file, addons)
 }
 
 pub fn auto_detect_wow_path() -> Option<String> {

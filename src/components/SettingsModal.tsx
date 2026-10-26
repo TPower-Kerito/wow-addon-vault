@@ -20,6 +20,7 @@ export const SettingsModal: React.FC<Props> = ({ isOpen, onClose, settings, onSa
   const [gameFlavor, setGameFlavor] = useState<'retail' | 'forever' | 'all'>(
     (settings.game_flavor as 'retail' | 'forever' | 'all') || 'retail'
   );
+  const [autoUpdateAddons, setAutoUpdateAddons] = useState(Boolean(settings.auto_update_addons));
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [detecting, setDetecting] = useState(false);
 
@@ -66,6 +67,7 @@ export const SettingsModal: React.FC<Props> = ({ isOpen, onClose, settings, onSa
       github_token: githubToken.trim() ? githubToken.trim() : null,
       details_view_mode: detailsViewMode,
       game_flavor: gameFlavor,
+      auto_update_addons: autoUpdateAddons,
     };
     onSave(updated);
     onClose();
@@ -214,6 +216,35 @@ export const SettingsModal: React.FC<Props> = ({ isOpen, onClose, settings, onSa
                 }`}
               >
                 All Branches
+              </button>
+            </div>
+          </div>
+
+          {/* Auto-Update Addons Section */}
+          <div className="space-y-2 pt-3 border-t border-[#262c3d]/60">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                  <Sparkles size={14} className="text-amber-400" />
+                  Auto-Update Addons
+                </label>
+                <p className="text-[11px] text-slate-400">
+                  Automatically download and install updates in background when detected.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setAutoUpdateAddons(!autoUpdateAddons)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  autoUpdateAddons ? 'bg-amber-500' : 'bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                    autoUpdateAddons ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
               </button>
             </div>
           </div>
