@@ -1011,11 +1011,22 @@ async fn check_app_update() -> Result<Option<AppUpdateInfo>, String> {
 
         let mut download_url = None;
         if let Some(assets) = json["assets"].as_array() {
+            // First look for Setup installer
             for asset in assets {
-                let name = asset["name"].as_str().unwrap_or("");
-                if name.ends_with(".exe") {
+                let name = asset["name"].as_str().unwrap_or("").to_lowercase();
+                if name.contains("setup") && name.ends_with(".exe") {
                     download_url = asset["browser_download_url"].as_str().map(|s| s.to_string());
                     break;
+                }
+            }
+            // Fallback to any .exe asset
+            if download_url.is_none() {
+                for asset in assets {
+                    let name = asset["name"].as_str().unwrap_or("").to_lowercase();
+                    if name.ends_with(".exe") {
+                        download_url = asset["browser_download_url"].as_str().map(|s| s.to_string());
+                        break;
+                    }
                 }
             }
         }
@@ -1033,6 +1044,95 @@ async fn check_app_update() -> Result<Option<AppUpdateInfo>, String> {
 }
 
 #[tauri::command]
+#[allow(unreachable_code)]
+async fn install_app_update(download_url: Option<String>) -> Result<(), String> {
+    let url = download_url.ok_or_else(|| "No update download URL available.".to_string())?;
+
+    let client = reqwest::Client::builder()
+        .user_agent("WoWAddonVault/1.0")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let res = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to download server: {}", e))?;
+
+    if !res.status().is_success() {
+        return Err(format!("Download failed with status: {}", res.status()));
+    }
+
+    let bytes = res
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read update data: {}", e))?;
+
+    if bytes.is_empty() {
+        return Err("Downloaded update file was empty.".to_string());
+    }
+
+    let current_exe = std::env::current_exe().map_err(|e| format!("Cannot locate current executable: {}", e))?;
+    let is_setup = url.to_lowercase().contains("setup");
+
+    if is_setup {
+        // Save installer into %TEMP%
+        let temp_dir = std::env::temp_dir();
+        let installer_path = temp_dir.join("WoW-Addon-Vault-Update-Setup.exe");
+        tokio::fs::write(&installer_path, &bytes)
+            .await
+            .map_err(|e| format!("Failed to write installer file: {}", e))?;
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            let _ = std::process::Command::new("cmd")
+                .args(["/C", "start", "", installer_path.to_str().unwrap_or("")])
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .spawn();
+
+            std::process::exit(0);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = std::process::Command::new(&installer_path).spawn();
+            std::process::exit(0);
+        }
+    } else {
+        // Portable executable in-place replacement
+        let old_exe = current_exe.with_extension("exe.old");
+        let _ = tokio::fs::remove_file(&old_exe).await;
+
+        tokio::fs::rename(&current_exe, &old_exe)
+            .await
+            .map_err(|e| format!("Failed to prepare update: {}", e))?;
+
+        if let Err(e) = tokio::fs::write(&current_exe, &bytes).await {
+            let _ = tokio::fs::rename(&old_exe, &current_exe).await;
+            return Err(format!("Failed to write new executable: {}", e));
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            let _ = std::process::Command::new("cmd")
+                .args(["/C", "start", "", current_exe.to_str().unwrap_or("")])
+                .creation_flags(0x08000000)
+                .spawn();
+
+            std::process::exit(0);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = std::process::Command::new(&current_exe).spawn();
+            std::process::exit(0);
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -1046,6 +1146,14 @@ fn open_external_url(url: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Clean up any leftover .exe.old from previous in-place update
+    if let Ok(current_exe) = std::env::current_exe() {
+        let old_exe = current_exe.with_extension("exe.old");
+        if old_exe.exists() {
+            let _ = std::fs::remove_file(old_exe);
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -1076,6 +1184,7 @@ pub fn run() {
             toggle_addon_ignore,
             set_addon_release_channel,
             check_app_update,
+            install_app_update,
             open_external_url,
         ])
         .run(tauri::generate_context!())

@@ -40,6 +40,8 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
+  const [updatingApp, setUpdatingApp] = useState(false);
+  const [updateAppError, setUpdateAppError] = useState<string | null>(null);
 
   useEffect(() => {
     loadInitialData();
@@ -109,6 +111,27 @@ export function App() {
       showToast('Settings saved successfully!');
     } catch (err: any) {
       alert(`Failed to save settings: ${err}`);
+    }
+  };
+
+  const handleApplyAppUpdate = async () => {
+    if (!appUpdate?.download_url) {
+      invoke('open_external_url', {
+        url: appUpdate?.html_url || 'https://github.com/TPower-Kerito/wow-addon-vault/releases',
+      });
+      return;
+    }
+
+    setUpdatingApp(true);
+    setUpdateAppError(null);
+    showToast('Downloading and installing app update... 🚀');
+
+    try {
+      await invoke('install_app_update', { downloadUrl: appUpdate.download_url });
+    } catch (err: any) {
+      console.error('Failed to apply app update:', err);
+      setUpdateAppError(typeof err === 'string' ? err : 'Update installation failed.');
+      setUpdatingApp(false);
     }
   };
 
@@ -443,21 +466,40 @@ export function App() {
         <div className="bg-gradient-to-r from-amber-500/20 via-purple-500/20 to-amber-500/20 border-b border-amber-500/30 px-6 py-2.5 flex items-center justify-between gap-4 animate-in slide-in-from-top-2 duration-300">
           <div className="flex items-center gap-2.5 text-xs text-amber-200">
             <Sparkles size={16} className="text-amber-400 shrink-0" />
-            <span>
-              <strong>New App Version Available!</strong> (v{appUpdate.latest_version}) — You are currently on v{appUpdate.current_version}.
-            </span>
+            <div>
+              <span>
+                <strong>New App Version Available!</strong> (v{appUpdate.latest_version}) — You are currently on v{appUpdate.current_version}.
+              </span>
+              {updateAppError && (
+                <div className="text-[11px] text-rose-400 mt-0.5">
+                  Update Error: {updateAppError}
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={() => invoke('open_external_url', { url: appUpdate.html_url })}
-              className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-3 py-1 rounded-lg text-xs transition-colors flex items-center gap-1.5 shadow-md shadow-amber-500/20"
+              onClick={handleApplyAppUpdate}
+              disabled={updatingApp}
+              className="bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold px-3.5 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer"
+              title="Download and apply update directly without opening browser"
             >
-              <Download size={13} />
-              Download Update
+              {updatingApp ? (
+                <>
+                  <Loader2 size={13} className="animate-spin text-slate-950" />
+                  <span>Updating App...</span>
+                </>
+              ) : (
+                <>
+                  <Download size={13} />
+                  <span>Update Now</span>
+                </>
+              )}
             </button>
             <button
               onClick={() => setAppUpdate(null)}
-              className="text-slate-400 hover:text-white text-xs px-2 py-1 transition-colors"
+              disabled={updatingApp}
+              className="text-slate-400 hover:text-white text-xs px-2 py-1 transition-colors disabled:opacity-50 cursor-pointer"
             >
               Dismiss
             </button>
